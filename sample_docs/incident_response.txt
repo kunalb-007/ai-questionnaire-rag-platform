@@ -1,0 +1,120 @@
+ACME CORPORATION — INFORMATION SECURITY POLICY
+Document: IS-POL-005 — Incident Response Policy
+Version: 2.1 | Effective Date: 01 March 2025 | Owner: CISO
+
+================================================================================
+1. PURPOSE AND SCOPE
+================================================================================
+
+This policy defines ACME Corporation's framework for identifying, containing,
+eradicating, and recovering from information security incidents. It applies to
+all systems, data, employees, contractors, and third-party service providers.
+
+================================================================================
+2. INCIDENT CLASSIFICATION
+================================================================================
+
+2.1 Severity Levels
+
+Severity 1 — Critical
+Definition: Active breach of customer data, ransomware deployment, or
+compromise of production infrastructure. Executive escalation required.
+Response time: Immediate (within 15 minutes of detection).
+
+Severity 2 — High
+Definition: Confirmed malware infection, unauthorised data access, or
+compromise of an employee privileged account.
+Response time: Within 1 hour of detection.
+
+Severity 3 — Medium
+Definition: Phishing email delivery, suspected account compromise, policy
+violation with potential security impact.
+Response time: Within 4 hours of detection.
+
+Severity 4 — Low
+Definition: Failed login attempts below lockout threshold, minor policy
+violations, suspicious but unconfirmed activity.
+Response time: Within 24 hours of detection.
+
+================================================================================
+3. INCIDENT RESPONSE PHASES
+================================================================================
+
+3.1 Preparation
+The Security Operations Centre (SOC) maintains runbooks for the top 10 incident
+types. All response team members complete tabletop exercises quarterly.
+
+3.2 Identification
+All employees are required to report suspected security incidents to the
+Security Operations Centre via:
+  - Email: security@acme.com
+  - Phone: +1-800-ACME-SOC (24/7 hotline)
+  - Internal portal: https://security.acme.internal/report
+
+3.3 Containment
+Short-term containment actions must begin within 30 minutes of Severity 1
+classification. This may include isolating affected systems, blocking source
+IP addresses, or revoking compromised credentials.
+
+3.4 Eradication
+Root cause must be identified and remediated before systems are returned to
+production. All indicators of compromise (IOCs) are submitted to the threat
+intelligence platform.
+
+3.5 Recovery
+Systems are restored from known-good backups or rebuilt from golden images.
+A post-restoration monitoring period of 72 hours is required for Severity 1
+incidents before full operational status is declared.
+
+3.6 Lessons Learned
+A post-incident review (PIR) must be completed within 5 business days of
+incident closure for Severity 1 and 2 incidents, and within 10 business days
+for Severity 3.
+
+================================================================================
+4. NOTIFICATION REQUIREMENTS
+================================================================================
+
+4.1 Internal Escalation
+  - Severity 1: CISO and CEO must be notified within 30 minutes.
+  - Severity 2: CISO must be notified within 1 hour.
+  - Severity 3/4: Daily summary report to Information Security Manager.
+
+4.2 Regulatory Notification
+Data breaches affecting personal data of EU residents must be reported to the
+relevant supervisory authority within 72 hours under GDPR Article 33.
+Breaches affecting US residents in regulated sectors follow applicable state
+breach notification laws (minimum: notify within 30 days for most US states).
+
+4.3 Customer Notification
+Customers whose data is confirmed to have been accessed or exfiltrated must
+be notified within 72 hours of confirmation, regardless of regulatory
+requirements.
+
+================================================================================
+5. ROLES AND RESPONSIBILITIES
+================================================================================
+
+Incident Commander (IC): Appointed per-incident from the SOC team. Owns
+the incident from detection to closure.
+
+Information Security Manager: Approves containment actions that affect
+production services. Owns regulatory notification decisions.
+
+CISO: Executive escalation point. Approves customer communications and
+law enforcement engagement.
+
+Legal Counsel: Consulted for all Severity 1 incidents and any incident
+involving potential regulatory notification.
+
+================================================================================
+6. EVIDENCE PRESERVATION
+================================================================================
+
+All forensic evidence (logs, memory dumps, disk images) must be preserved
+in write-protected storage before containment actions that might destroy
+evidence. Chain of custody must be documented for any evidence that may
+be used in legal proceedings.
+
+Document Owner: Chief Information Security Officer (CISO)
+Next Review Date: 01 March 2026
