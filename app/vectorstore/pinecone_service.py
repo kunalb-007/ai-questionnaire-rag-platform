@@ -36,7 +36,7 @@ _pinecone_client: Pinecone | None = None
 _openai_client: OpenAI | None = None
 _bm25_encoder: BM25Encoder | None = None
 # _cross_encoder: CrossEncoder | None = None
-_cross_encoder = None
+# _cross_encoder = None
 
 def _get_pinecone() -> Pinecone:
     global _pinecone_client
@@ -67,22 +67,22 @@ def _get_bm25() -> BM25Encoder:
     return _bm25_encoder
 
 
-def _get_cross_encoder() -> CrossEncoder:
-    """
-    Cross-encoder for reranking.
-    ms-marco-MiniLM-L-6-v2 is small, fast, and good enough for demo.
-    """
-    global _cross_encoder
+# def _get_cross_encoder() -> CrossEncoder:
+#     """
+#     Cross-encoder for reranking.
+#     ms-marco-MiniLM-L-6-v2 is small, fast, and good enough for demo.
+#     """
+#     global _cross_encoder
 #     if _cross_encoder is None:
 #         _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-     if _cross_encoder is None:
-         from sentence_transformers import CrossEncoder
-
-         _cross_encoder = CrossEncoder(
-            "cross-encoder/ms-marco-MiniLM-L-6-v2"
-         )
-
-    return _cross_encoder
+#      if _cross_encoder is None:
+#          from sentence_transformers import CrossEncoder
+#
+#          _cross_encoder = CrossEncoder(
+#             "cross-encoder/ms-marco-MiniLM-L-6-v2"
+#          )
+#
+#     return _cross_encoder
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ def ensure_index() -> None:
     logger.info("Creating Pinecone index '%s'.", settings.pinecone_index_name)
     pc.create_index(
         name=settings.pinecone_index_name,
-        dimension=settings.embedding_dimension,   # 1536 for text-embedding-3-small
+        dimension=settings.embedding_dimension,   # 2048 dimensions
         metric="dotproduct",                       # required for hybrid search
         spec=ServerlessSpec(
             cloud=settings.pinecone_cloud,         # "aws"
@@ -198,7 +198,7 @@ def insert_chunks(chunks: list[Chunk], embeddings: list[list[float]]) -> None:
 def hybrid_search(
     query: str,
     top_k: int = 5,
-    rerank: bool = True,
+    rerank: bool = False,
     fetch_k: int = 20,
 ) -> list[dict]:
     """
