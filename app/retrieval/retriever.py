@@ -1,38 +1,28 @@
 """
-retriever.py — Accept a natural-language query, embed it, search Qdrant,
-and return structured retrieval results.
+retriever.py — Accept a query, run hybrid search, optional reranking,
+return structured RetrievedChunk list.
 
-This module is the bridge between the user's question and the vector store.
-It deliberately does not call the LLM — retrieval and generation are kept
-separate so each can be tested, measured, and improved independently.
+Changes from original:
+  - Qdrant similarity_search → Pinecone hybrid_search
+  - embed_query no longer called here (pinecone_service handles it internally)
+  - Hybrid search + cross-encoder reranking controlled by config flags
+  - RetrievedChunk dataclass unchanged — generator is unaffected
 
 Retrieval flow:
-  1. User query string → embed_query() → query vector (384 floats)
-  2. query vector → Qdrant similarity_search() → top-K ScoredPoints
-  3. ScoredPoints → RetrievedChunk list (normalised structure for generator)
-
-Why return a structured dataclass instead of raw Qdrant objects?
-  Decouples the generator from Qdrant's SDK types. If we switch to a
-  different vector DB, only this file changes — the generator is unaffected.
-
-Interview note on retrieval relevance:
-  Cosine similarity gives a score but not a guarantee of relevance.
-  A score of 0.85 means the query and chunk vectors are geometrically
-  close, but "geometric closeness" in embedding space reflects statistical
-  co-occurrence in training data, not logical relevance to the question.
-  Techniques to improve relevance:
-    - Reranking: pass top-K through a cross-encoder that scores relevance
-      directly (more expensive but more accurate).
-    - Hybrid search: combine dense vector search with BM25 keyword search.
-    - Metadata filtering: restrict search to specific documents.
-  We don't implement these in the MVP but they are the natural next step.
+  1. query string
+  2. → pinecone_service.hybrid_search()
+       a. OpenAI dense embedding
+       b. BM25 sparse encoding
+       c. Pinecone RRF combination
+       d. (optional) cross-encoder reranking
+  3. → list[RetrievedChunk]
 """
 
 import logging
 from dataclasses import dataclass
 
-from app.embeddings.embedding_service import embed_query
-from app.vectorstore.qdrant_service import similarity_search, get_client
+from app.config import settings
+from app.vectorstore.pinecone_service import hybrid_search
 
 logger = logging.getLogger(__name__)
 
@@ -48,63 +38,45 @@ class RetrievedChunk:
 
 def retrieve(
         query: str,
-        qdrant_url: str,
-        collection_name: str,
-        embedding_model: str,
         top_k: int = 5,
 ) -> list[RetrievedChunk]:
     """
-    Embed a query and retrieve the most relevant chunks from Qdrant.
+    Retrieve the most relevant chunks for a query using hybrid search.
 
     Args:
-        query: the user's natural-language question.
-        qdrant_url: URL of the Qdrant instance.
-        collection_name: target Qdrant collection.
-        embedding_model: must match the model used during ingestion.
-        top_k: number of chunks to return.
+        query  : user's natural-language question
+        top_k  : number of final results to return
 
     Returns:
-        List of RetrievedChunk ordered by descending similarity score.
-
-    Raises:
-        ValueError: if query is empty.
+        List of RetrievedChunk ordered by relevance (best first).
     """
     if not query.strip():
         raise ValueError("Query cannot be empty.")
 
-    # Step 1: embed the query using the same model used for document chunks
-    query_vector = embed_query(query, embedding_model)
     logger.info(
-        "Query embedded (dim=%d). Searching collection '%s' for top-%d.",
-        len(query_vector),
-        collection_name,
-        top_k,
+        "Retrieving top-%d chunks (hybrid=%s, rerank=%s).",
+        top_k, settings.use_hybrid_search, settings.use_reranking,
     )
 
-    # Step 2: vector similarity search in Qdrant
-    client = get_client(qdrant_url)
-    scored_points = similarity_search(
-        client=client,
-        collection_name=collection_name,
-        query_vector=query_vector,
+    raw_results = hybrid_search(
+        query=query,
         top_k=top_k,
+        rerank=settings.use_reranking,
+        fetch_k=settings.rerank_candidates,
     )
 
-    # Step 3: map Qdrant ScoredPoint objects to our clean dataclass
-    results = []
-    for point in scored_points:
-        payload = point.payload or {}
-        results.append(
-            RetrievedChunk(
-                text=payload.get("text", ""),
-                filename=payload.get("filename", "unknown"),
-                page=payload.get("page", 0),
-                chunk_index=payload.get("chunk_index", -1),
-                score=round(point.score, 4),
-            )
+    chunks = [
+        RetrievedChunk(
+            text=r["text"],
+            filename=r["filename"],
+            page=r["page"],
+            chunk_index=r["chunk_index"],
+            score=r["score"],
         )
+        for r in raw_results
+    ]
 
-    if not results:
-        logger.warning("No results returned for query: '%s'", query)
+    if not chunks:
+        logger.warning("No results returned for query: '%s'", query[:80])
 
-    return results
+    return chunks

@@ -76,7 +76,7 @@ class QueryResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str = Field(description="'ok' when all dependencies are reachable.")
-    qdrant: str = Field(description="'connected' or 'unreachable'.")
+    pinecone: str = Field(description="'connected' or 'unreachable'.")
     embedding_model: str
     llm_model: str
 

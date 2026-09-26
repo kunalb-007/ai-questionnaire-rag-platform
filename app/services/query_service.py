@@ -72,9 +72,6 @@ def run_query(question: str, top_k: int) -> dict:
     try:
         chunks = retrieve(
             query=question,
-            qdrant_url=settings.qdrant_url,
-            collection_name=settings.collection_name,
-            embedding_model=settings.embedding_model,
             top_k=top_k,
         )
     except Exception as exc:

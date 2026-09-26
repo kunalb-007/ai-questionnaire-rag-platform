@@ -1,18 +1,16 @@
 """
 cleaner.py — Normalize extracted text before chunking.
 
-Philosophy: clean enough to remove noise, conservative enough to preserve
-meaning and structure. Aggressive cleaning (stripping all punctuation,
-lowercasing, stemming) belongs in classical NLP, not RAG pipelines where
-the LLM handles language understanding.
+4 operations only (interview-friendly):
+  1. Normalize line endings  → consistent \n
+  2. Rejoin hyphenated PDF line breaks  → "authen-\ntication" → "authentication"
+  3. Remove excessive whitespace / blank lines
+  4. Preserve punctuation, case, and paragraph structure
 
-Interview note on cleaning limitations:
-  - Hyphenated line-breaks in PDFs ("secu-\nrity") look like real words
-    after join but are invisible to character-based chunkers.
-  - Headers extracted from PDFs often appear as isolated lines — we preserve
-    them because they give context to the chunks that follow.
-  - We cannot recover structure destroyed during PDF text extraction
-    (e.g., multi-column layouts).
+What we deliberately do NOT do:
+  - Lowercase  (destroys "MFA", "GDPR")
+  - Remove punctuation  (LLM needs sentence boundaries)
+  - Strip all newlines  (destroys paragraph structure)
 """
 
 import re
@@ -22,62 +20,29 @@ logger = logging.getLogger(__name__)
 
 
 def clean_text(text: str) -> str:
-    """
-    Apply lightweight normalization to a single page's extracted text.
-
-    Steps applied (in order):
-      1. Normalize line endings to \\n.
-      2. Rejoin PDF hyphenated line-breaks (e.g., "secu-\\nrity" → "security").
-      3. Collapse runs of blank lines to a single blank line (paragraph boundary).
-      4. Strip leading/trailing whitespace from each line.
-      5. Remove lines that are purely whitespace or non-printable characters.
-      6. Collapse multiple spaces within a line to a single space.
-
-    What we deliberately do NOT do:
-      - Lowercase (destroys acronym meaning: "MFA", "GDPR").
-      - Remove punctuation (destroys sentence boundaries the LLM needs).
-      - Strip all newlines (destroys paragraph structure).
-    """
+    """Apply 4-step normalization to a single page's extracted text."""
     if not text:
         return ""
 
-    # 1. Normalize CRLF / CR to LF
+    # 1. Normalize line endings (CRLF / CR → LF)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
 
-    # 2. Rejoin hyphenated line-breaks common in justified PDF text
+    # 2. Rejoin hyphenated PDF line breaks
     #    "authen-\ntication" → "authentication"
     text = re.sub(r"-\n(\w)", r"\1", text)
 
-    # 3. Collapse 3+ consecutive newlines to exactly 2 (one blank line)
+    # 3. Remove excessive blank lines (3+ newlines → 1 blank line)
+    #    and collapse multiple spaces within a line
     text = re.sub(r"\n{3,}", "\n\n", text)
-
-    # 4 & 5. Strip each line; drop lines that are empty after stripping
-    lines = []
-    for line in text.split("\n"):
-        stripped = line.strip()
-        # Drop lines with only non-printable or control characters
-        if stripped and any(c.isprintable() for c in stripped):
-            lines.append(stripped)
-        else:
-            # Preserve blank line as paragraph separator
-            lines.append("")
-
-    text = "\n".join(lines)
-
-    # 6. Collapse multiple spaces within a line
     text = re.sub(r"[ \t]+", " ", text)
 
-    # Final strip of the whole text
+    # 4. Strip leading/trailing whitespace — punctuation, case, and
+    #    paragraph structure (\n\n boundaries) are left intact
     return text.strip()
 
 
 def clean_pages(pages: list[dict]) -> list[dict]:
-    """
-    Apply clean_text to every page dict returned by the parser.
-
-    Filters out pages that become empty after cleaning.
-    Returns a new list — does not mutate input.
-    """
+    """Apply clean_text to every page. Drop pages that become empty."""
     cleaned = []
     for page in pages:
         cleaned_text = clean_text(page["text"])
@@ -86,11 +51,8 @@ def clean_pages(pages: list[dict]) -> list[dict]:
         else:
             logger.debug(
                 "Page %d of '%s' became empty after cleaning — skipping.",
-                page["page"],
-                page["filename"],
+                page["page"], page["filename"],
             )
 
-    logger.info(
-        "Cleaning complete: %d/%d pages retained.", len(cleaned), len(pages)
-    )
+    logger.info("Cleaning complete: %d/%d pages retained.", len(cleaned), len(pages))
     return cleaned

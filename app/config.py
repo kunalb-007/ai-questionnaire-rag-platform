@@ -1,215 +1,98 @@
 """
-pipeline.py — End-to-end RAG pipeline entry point.
+config.py — Central configuration loaded from environment variables.
 
-Run this file directly to:
-  1. Ingest a document (parse → clean → chunk → embed → store).
-  2. Query the document store and get a cited answer.
-
-Usage:
-  # Ingest a document
-  python pipeline.py ingest path/to/policy.pdf
-
-  # Ask a question
-  python pipeline.py query "What is the password policy?"
-
-  # Ingest then immediately query (useful for demos)
-  python pipeline.py ingest path/to/policy.pdf --query "What is the MFA policy?"
-
-This file is intentionally verbose so every step of the RAG pipeline
-is visible and traceable. In an interview, walk through each step in order.
+Changes from original:
+  - Removed Qdrant settings
+  - Added Pinecone settings (api_key, index_name, cloud, region)
+  - Changed embedding model to text-embedding-3-small (dim=1536)
+  - Added embedding_dimension (must match Pinecone index)
+  - Added rerank_candidates (fetch_k before cross-encoder reranking)
+  - Added request_timeout and max_retries (used by query_service)
+  - Added log_level (used by main.py)
 """
 
-import argparse
-import logging
-import sys
+import os
+from dataclasses import dataclass
+from dotenv import load_dotenv
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from app.ingestion.parser import parse_document
-from app.ingestion.cleaner import clean_pages
-from app.ingestion.chunker import chunk_pages
-from app.embeddings.embedding_service import embed_texts, EMBEDDING_DIMENSION
-from app.vectorstore.qdrant_service import get_client, ensure_collection, insert_chunks
-from app.retrieval.retriever import retrieve
-from app.generation.answer_generator import generate_answer
-
-# Configure logging — INFO level shows the pipeline steps clearly.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    datefmt="%H:%M:%S",
-)
-logger = logging.getLogger("pipeline")
+load_dotenv()
 
 
-# ---------------------------------------------------------------------------
-# INGESTION PIPELINE
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Settings:
+    # --- Pinecone ---
+    pinecone_api_key: str
+    pinecone_index_name: str
+    pinecone_cloud: str          # "aws" or "gcp"
+    pinecone_region: str         # e.g. "us-east-1"
 
-def ingest_document(file_path: str) -> None:
-    """
-    Full ingestion pipeline: file → Qdrant.
+    # --- LLM ---
+    llm_api_key: str             # OpenAI API key (used for both LLM + embeddings)
+    llm_model: str               # e.g. "gpt-4o-mini"
+    llm_base_url: str
 
-    Steps:
-      1. Parse  — extract raw text and page metadata from file.
-      2. Clean  — normalise whitespace, remove noise.
-      3. Chunk  — split into overlapping chunks for embedding.
-      4. Embed  — generate vectors for each chunk.
-      5. Store  — upsert into Qdrant with payload metadata.
-    """
-    print(f"\n{'='*60}")
-    print(f"  INGESTION PIPELINE")
-    print(f"  File: {file_path}")
-    print(f"{'='*60}\n")
+    # --- Embeddings ---
+    embedding_model: str         # "text-embedding-3-small"
+    embedding_dimension: int     # 1536 for text-embedding-3-small
 
-    # --- Step 1: Parse ---
-    print("Step 1/5 · Parsing document...")
-    pages = parse_document(file_path)
-    print(f"  ✓ Extracted {len(pages)} page(s).\n")
+    # --- Retrieval ---
+    top_k: int                   # final results to return
+    rerank_candidates: int       # candidates fetched before cross-encoder reranking
+    use_hybrid_search: bool      # toggle hybrid vs dense-only
+    use_reranking: bool          # toggle cross-encoder reranking
 
-    # --- Step 2: Clean ---
-    print("Step 2/5 · Cleaning text...")
-    pages = clean_pages(pages)
-    print(f"  ✓ {len(pages)} page(s) retained after cleaning.\n")
+    # --- Chunking ---
+    chunk_size: int
+    chunk_overlap: int
 
-    # --- Step 3: Chunk ---
-    print(f"Step 3/5 · Chunking (size={settings.chunk_size}, overlap={settings.chunk_overlap})...")
-    chunks = chunk_pages(
-        pages,
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
-    )
-    print(f"  ✓ {len(chunks)} chunk(s) produced.\n")
-
-    if not chunks:
-        print("ERROR: No chunks produced. Document may be empty or unreadable.")
-        sys.exit(1)
-
-    # --- Step 4: Embed ---
-    print(f"Step 4/5 · Generating embeddings (model={settings.embedding_model})...")
-    texts = [chunk.text for chunk in chunks]
-    embeddings = embed_texts(texts, settings.embedding_model)
-    print(f"  ✓ {len(embeddings)} embedding(s) generated (dim={EMBEDDING_DIMENSION}).\n")
-
-    # --- Step 5: Store in Qdrant ---
-    print(f"Step 5/5 · Storing in Qdrant (collection='{settings.collection_name}')...")
-    client = get_client(settings.qdrant_url)
-    ensure_collection(client, settings.collection_name, EMBEDDING_DIMENSION)
-    insert_chunks(client, settings.collection_name, chunks, embeddings)
-    print(f"  ✓ {len(chunks)} chunk(s) stored.\n")
-
-    print("=" * 60)
-    print(f"  Ingestion complete: {file_path}")
-    print(f"  Collection '{settings.collection_name}' is ready to query.")
-    print("=" * 60 + "\n")
+    # --- App ---
+    request_timeout: int
+    max_retries: int
+    log_level: str
 
 
-# ---------------------------------------------------------------------------
-# QUERY PIPELINE
-# ---------------------------------------------------------------------------
-
-def query_pipeline(question: str) -> None:
-    """
-    Full query pipeline: question → cited answer.
-
-    Steps:
-      1. Embed query  — same model used during ingestion.
-      2. Retrieve     — top-K similar chunks from Qdrant.
-      3. Generate     — LLM reads chunks, produces cited answer.
-      4. Display      — print answer + source metadata.
-    """
-    print(f"\n{'='*60}")
-    print(f"  QUERY PIPELINE")
-    print(f"  Question: {question}")
-    print(f"{'='*60}\n")
-
-    # --- Step 1 & 2: Retrieve ---
-    print(f"Step 1/2 · Retrieving top-{settings.top_k} chunks from Qdrant...")
-    retrieved_chunks = retrieve(
-        query=question,
-        qdrant_url=settings.qdrant_url,
-        collection_name=settings.collection_name,
-        embedding_model=settings.embedding_model,
-        top_k=settings.top_k,
-    )
-
-    if not retrieved_chunks:
-        print("  ✗ No relevant chunks found. Is the collection populated?\n")
-        sys.exit(1)
-
-    print(f"  ✓ {len(retrieved_chunks)} chunk(s) retrieved.\n")
-    print("  Retrieved chunks (preview):")
-    for i, chunk in enumerate(retrieved_chunks, 1):
-        preview = chunk.text[:100].replace("\n", " ")
-        print(f"    [{i}] score={chunk.score} | {chunk.filename} p{chunk.page} | \"{preview}...\"")
-
-    # --- Step 3: Generate ---
-    print(f"\nStep 2/2 · Generating answer (model={settings.llm_model})...")
-    result = generate_answer(
-        query=question,
-        retrieved_chunks=retrieved_chunks,
-        llm_api_key=settings.llm_api_key,
-        llm_model=settings.llm_model,
-        llm_base_url=settings.llm_base_url,
-    )
-
-    # --- Step 4: Display ---
-    print("\n" + "=" * 60)
-    print("  ANSWER")
-    print("=" * 60)
-    print(result.answer)
-
-    print("\n" + "-" * 60)
-    print("  SOURCES USED AS CONTEXT")
-    print("-" * 60)
-    for src in result.sources:
-        print(
-            f"  • {src['filename']} | Page {src['page']} "
-            f"| Chunk #{src['chunk_index']} | Similarity: {src['score']}"
+def _require(key: str) -> str:
+    value = os.getenv(key)
+    if not value:
+        raise EnvironmentError(
+            f"Required environment variable '{key}' is missing. "
+            f"Copy .env.example to .env and fill in values."
         )
-    print()
+    return value
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+def load_settings() -> Settings:
+    return Settings(
+        # Pinecone
+        pinecone_api_key=_require("PINECONE_API_KEY"),
+        pinecone_index_name=os.getenv("PINECONE_INDEX_NAME", "enterprise-docs"),
+        pinecone_cloud=os.getenv("PINECONE_CLOUD", "aws"),
+        pinecone_region=os.getenv("PINECONE_REGION", "us-east-1"),
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Enterprise Document Intelligence RAG Pipeline",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python pipeline.py ingest docs/password_policy.pdf
-  python pipeline.py query "What is the minimum password length?"
-  python pipeline.py ingest docs/policy.pdf --query "What is the MFA policy?"
-        """,
+        # LLM
+        llm_api_key=_require("OPENROUTER_API_KEY"),
+        llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+        llm_base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1"),
+
+        # Embeddings
+        embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+        embedding_dimension=int(os.getenv("EMBEDDING_DIMENSION", "1536")),
+
+        # Retrieval
+        top_k=int(os.getenv("TOP_K", "5")),
+        rerank_candidates=int(os.getenv("RERANK_CANDIDATES", "20")),
+        use_hybrid_search=os.getenv("USE_HYBRID_SEARCH", "true").lower() == "true",
+        use_reranking=os.getenv("USE_RERANKING", "true").lower() == "true",
+
+        # Chunking
+        chunk_size=int(os.getenv("CHUNK_SIZE", "512")),
+        chunk_overlap=int(os.getenv("CHUNK_OVERLAP", "64")),
+
+        # App
+        request_timeout=int(os.getenv("REQUEST_TIMEOUT", "30")),
+        max_retries=int(os.getenv("MAX_RETRIES", "2")),
+        log_level=os.getenv("LOG_LEVEL", "INFO"),
     )
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # ingest sub-command
-    ingest_parser = subparsers.add_parser("ingest", help="Ingest a document into Qdrant.")
-    ingest_parser.add_argument("file_path", help="Path to PDF, DOCX, or TXT file.")
-    ingest_parser.add_argument(
-        "--query", "-q",
-        help="Optional: run a query immediately after ingestion.",
-        default=None,
-    )
-
-    # query sub-command
-    query_parser = subparsers.add_parser("query", help="Ask a question against ingested documents.")
-    query_parser.add_argument("question", help="Natural language question.")
-
-    args = parser.parse_args()
-
-    if args.command == "ingest":
-        ingest_document(args.file_path)
-        if args.query:
-            query_pipeline(args.query)
-
-    elif args.command == "query":
-        query_pipeline(args.question)
-
-
-if __name__ == "__main__":
-    main()
+settings = load_settings()

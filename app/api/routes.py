@@ -12,7 +12,7 @@ HTTP status code rationale:
   422 Unprocessable   — Pydantic validation failed (auto-handled by FastAPI).
   500 Internal Error  — unexpected server-side failure.
   502 Bad Gateway     — LLM API returned an error.
-  503 Service Unavail — Qdrant unreachable.
+  503 Service Unavail — Pinecone unreachable.
   504 Gateway Timeout — LLM did not respond in time.
 
 Request ID:
@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
     status_code=status.HTTP_201_CREATED,
     summary="Upload and index a document",
     description="Upload a PDF, DOCX, or TXT file. The file is parsed, chunked, "
-                "embedded, and stored in Qdrant ready for querying.",
+                "embedded, and stored in Pinecone ready for querying.",
 )
 async def upload_document(
         request: Request,
@@ -185,28 +185,30 @@ async def query_documents(
     "/health",
     response_model=HealthResponse,
     summary="Service health check",
-    description="Returns 200 if the API is running. Checks Qdrant connectivity.",
+    description="Returns 200 if the API is running and Pinecone is reachable.",
 )
 async def health_check() -> HealthResponse:
     """
-    Lightweight health check for load balancers and container orchestrators.
+    Lightweight health check.
 
-    We check Qdrant reachability by listing collections (cheap operation).
-    We do NOT check LLM reachability on every health ping — that would be
-    expensive and would cause false negatives during LLM rate-limiting.
+    Checks Pinecone connectivity without performing an embedding or LLM call.
     """
-    qdrant_status = "unreachable"
+    pinecone_status = "unreachable"
+
     try:
-        from app.vectorstore.qdrant_service import get_client
-        client = get_client(settings.qdrant_url)
-        client.get_collections()
-        qdrant_status = "connected"
+        from app.vectorstore.pinecone_service import get_index
+
+        index = get_index()
+        index.describe_index_stats()
+
+        pinecone_status = "connected"
+
     except Exception as exc:
-        logger.warning("Health check: Qdrant unreachable — %s", exc)
+        logger.warning("Health check: Pinecone unreachable — %s", exc)
 
     return HealthResponse(
         status="ok",
-        qdrant=qdrant_status,
+        pinecone=pinecone_status,
         embedding_model=settings.embedding_model,
         llm_model=settings.llm_model,
     )

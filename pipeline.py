@@ -28,7 +28,11 @@ from app.ingestion.parser import parse_document
 from app.ingestion.cleaner import clean_pages
 from app.ingestion.chunker import chunk_pages
 from app.embeddings.embedding_service import embed_texts, EMBEDDING_DIMENSION
-from app.vectorstore.qdrant_service import get_client, ensure_collection, insert_chunks
+from app.vectorstore.pinecone_service import (
+    ensure_index,
+    embed_texts,
+    insert_chunks,
+)
 from app.retrieval.retriever import retrieve
 from app.generation.answer_generator import generate_answer
 

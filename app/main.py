@@ -113,8 +113,8 @@ app.include_router(router)
 async def on_startup():
     logger.info(
         "Enterprise Document Intelligence API starting — "
-        "model=%s qdrant=%s collection=%s",
+        "model=%s pinecone_index=%s",
         settings.llm_model,
-        settings.qdrant_url,
-        settings.collection_name,
+        settings.pinecone_index_name,
     )
+
