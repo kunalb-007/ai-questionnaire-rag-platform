@@ -6,7 +6,7 @@ langchain-text-splitters==0.3.8
 pinecone             # Pinecone client
 pinecone-text        # BM25Encoder for sparse vectors
 PyMuPDF==1.25.5
-docling              # DOCX parsing with page numbers
+#docling              # DOCX parsing with page numbers
 python-dotenv==1.1.0
 fastapi==0.115.12
 uvicorn==0.34.2
@@ -15,4 +15,5 @@ pydantic==2.11.4
 pydantic-settings==2.3.0
 pytest==8.3.5
 pytest-asyncio==0.26.0
+#sentence-transformers  # cross-encoder/ms-marco-MiniLM-L-6-v2
 python-multipart     # required for FastAPI file uploads

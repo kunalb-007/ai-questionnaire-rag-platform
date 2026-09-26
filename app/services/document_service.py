@@ -27,7 +27,8 @@ from app.vectorstore.pinecone_service import ensure_index, insert_chunks
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
+# ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
+ALLOWED_EXTENSIONS = {".pdf", ".txt"}
 EMBEDDING_DIMENSION = settings.embedding_dimension  # 1536
 
 
