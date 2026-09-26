@@ -48,7 +48,10 @@ def _get_pinecone() -> Pinecone:
 def _get_openai() -> OpenAI:
     global _openai_client
     if _openai_client is None:
-        _openai_client = OpenAI(api_key=settings.llm_api_key)
+        _openai_client = OpenAI(
+            api_key=settings.llm_api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
     return _openai_client
 
 
@@ -269,35 +272,61 @@ def hybrid_search(
 
 def _rerank(query: str, matches: list[dict], top_k: int) -> list[dict]:
     """
-    Rerank candidates using a cross-encoder.
+    Rerank Pinecone candidates using a cross-encoder.
 
-    Bi-encoder (embedding similarity): fast, runs over entire corpus,
-    but scores query and document independently.
-
-    Cross-encoder: reads (query, document) together → more accurate relevance
-    score. Too slow to run over entire corpus, so we run it only on the
-    top-20 candidates from hybrid search.
-
-    Pattern: retrieve top-20 cheap → rerank top-20 expensive → return top-K.
+    Retrieve top-N candidates from Pinecone, score each
+    (query, document) pair with the cross-encoder, then return
+    the top-K candidates by rerank score.
     """
     cross_encoder = _get_cross_encoder()
 
-    texts = [m.get("metadata", {}).get("text", "") for m in matches]
+    texts = [
+        m.get("metadata", {}).get("text", "")
+        for m in matches
+    ]
+
     pairs = [(query, text) for text in texts]
 
-    # Cross-encoder returns a relevance score per pair
     scores = cross_encoder.predict(pairs)
 
-    # Attach rerank score and sort descending
-    for match, score in zip(matches, scores):
-        match["rerank_score"] = float(score)
+    logger.info(
+        "Cross-encoder reranking: candidates=%d scores=%d",
+        len(matches),
+        len(scores),
+    )
 
-    reranked = sorted(matches, key=lambda m: m["rerank_score"], reverse=True)
+    # Create NEW normal dictionaries instead of modifying
+    # Pinecone Match objects in-place.
+    reranked_candidates = []
+
+    for match, score in zip(matches, scores):
+        metadata = match.get("metadata", {})
+
+        reranked_candidates.append({
+            "id": match.get("id"),
+            "score": match.get("score", 0.0),
+            "rerank_score": float(score),
+            "metadata": metadata,
+        })
+
+    if len(reranked_candidates) != len(matches):
+        raise RuntimeError(
+            f"Cross-encoder returned {len(scores)} scores "
+            f"for {len(matches)} candidates."
+        )
+
+    # Sort using our own normal dictionaries
+    reranked_candidates.sort(
+        key=lambda m: m["rerank_score"],
+        reverse=True,
+    )
 
     logger.debug(
         "Reranking complete — top score: %.4f, bottom score: %.4f",
-        reranked[0]["rerank_score"] if reranked else 0,
-        reranked[-1]["rerank_score"] if reranked else 0,
+        reranked_candidates[0]["rerank_score"]
+        if reranked_candidates else 0,
+        reranked_candidates[-1]["rerank_score"]
+        if reranked_candidates else 0,
     )
 
-    return reranked[:top_k]
+    return reranked_candidates[:top_k]

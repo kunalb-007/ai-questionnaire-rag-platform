@@ -1,14 +1,8 @@
 """
-embedding_service.py — OpenAI text-embedding-3-small wrapper.
+embedding_service.py — OpenRouter wrapper.
 
-Why text-embedding-3-small over local FastEmbed?
-  - Higher quality embeddings (trained on much larger corpus)
-  - No local model download / GPU / ONNX runtime needed
-  - Easy to swap to text-embedding-3-large for better quality
-  - Dimension: 1536
-
-Trade-off: requires API call per batch (latency + cost).
-For demo scale: negligible. For production: batch aggressively.
+Embedding model:
+  nvidia/nemotron-3-embed-1b:free
 
 The same model MUST be used for ingestion AND query embedding.
 Changing models requires full re-ingestion.
@@ -26,7 +20,10 @@ _client: OpenAI | None = None
 def _get_client() -> OpenAI:
     global _client
     if _client is None:
-        _client = OpenAI(api_key=settings.llm_api_key)
+        _client = OpenAI(
+            api_key=settings.llm_api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
     return _client
 
 
