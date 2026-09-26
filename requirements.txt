@@ -15,5 +15,4 @@ pydantic==2.11.4
 pydantic-settings==2.3.0
 pytest==8.3.5
 pytest-asyncio==0.26.0
-sentence-transformers  # cross-encoder/ms-marco-MiniLM-L-6-v2
 python-multipart     # required for FastAPI file uploads

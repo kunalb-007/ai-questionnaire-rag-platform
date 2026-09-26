@@ -20,7 +20,7 @@ Why Pinecone over Qdrant?
 import logging
 from pinecone import Pinecone, ServerlessSpec
 from pinecone_text.sparse import BM25Encoder
-from sentence_transformers import CrossEncoder
+# from sentence_transformers import CrossEncoder
 from openai import OpenAI
 
 from app.config import settings
@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 _pinecone_client: Pinecone | None = None
 _openai_client: OpenAI | None = None
 _bm25_encoder: BM25Encoder | None = None
-_cross_encoder: CrossEncoder | None = None
-
+# _cross_encoder: CrossEncoder | None = None
+_cross_encoder = None
 
 def _get_pinecone() -> Pinecone:
     global _pinecone_client
@@ -73,8 +73,15 @@ def _get_cross_encoder() -> CrossEncoder:
     ms-marco-MiniLM-L-6-v2 is small, fast, and good enough for demo.
     """
     global _cross_encoder
-    if _cross_encoder is None:
-        _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+#     if _cross_encoder is None:
+#         _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+     if _cross_encoder is None:
+         from sentence_transformers import CrossEncoder
+
+         _cross_encoder = CrossEncoder(
+            "cross-encoder/ms-marco-MiniLM-L-6-v2"
+         )
+
     return _cross_encoder
 
 
