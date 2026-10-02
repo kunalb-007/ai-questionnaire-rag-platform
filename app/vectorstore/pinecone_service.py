@@ -185,7 +185,7 @@ def insert_chunks(chunks: list[Chunk], embeddings: list[list[float]]) -> None:
 
     index = get_index()
     # Pinecone recommends batches of 100
-    batch_size = 100
+    batch_size = 20
     for i in range(0, len(vectors), batch_size):
         index.upsert(vectors=vectors[i : i + batch_size])
 

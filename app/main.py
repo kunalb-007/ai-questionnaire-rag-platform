@@ -118,3 +118,12 @@ async def on_startup():
         settings.pinecone_index_name,
     )
 
+    # Warm up Pinecone connection so first request doesn't pay cold-start cost
+    try:
+        from app.vectorstore.pinecone_service import get_index
+        index = get_index()
+        index.describe_index_stats()
+        logger.info("Pinecone connection warmed up successfully.")
+    except Exception as exc:
+        logger.warning("Pinecone warmup failed: %s", exc)
+
