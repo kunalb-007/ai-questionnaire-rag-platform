@@ -81,8 +81,8 @@ def load_settings() -> Settings:
         # Retrieval
         top_k=int(os.getenv("TOP_K", "5")),
         rerank_candidates=int(os.getenv("RERANK_CANDIDATES", "20")),
-        use_hybrid_search=os.getenv("USE_HYBRID_SEARCH", "true").lower() == "true",
-        use_reranking=os.getenv("USE_RERANKING", "true").lower() == "true",
+        use_hybrid_search=os.getenv("USE_HYBRID_SEARCH", "false").lower() == "true",
+        use_reranking=os.getenv("USE_RERANKING", "false").lower() == "true",
 
         # Chunking
         chunk_size=int(os.getenv("CHUNK_SIZE", "512")),

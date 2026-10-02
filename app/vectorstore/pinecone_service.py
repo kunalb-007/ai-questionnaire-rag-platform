@@ -1,12 +1,12 @@
 """
 pinecone_service.py — Pinecone vector store operations.
 
-Hybrid search implementation:
+Hybrid search implementation (currently disabled for deployment):
   Dense  : text-embedding-3-small (OpenAI) — semantic meaning
   Sparse : BM25 (keyword matching)         — exact term overlap
   Combined with Reciprocal Rank Fusion (RRF) — no score scaling needed
 
-Cross-encoder reranking (medium priority):
+Cross-encoder reranking (currently disabled for deployment):
   After hybrid retrieval we rerank the candidates with a cross-encoder.
   A cross-encoder reads (query, chunk) together — more accurate than
   bi-encoder cosine similarity but too slow to run over entire corpus.
@@ -19,8 +19,6 @@ Why Pinecone over Qdrant?
 
 import logging
 from pinecone import Pinecone, ServerlessSpec
-from pinecone_text.sparse import BM25Encoder
-# from sentence_transformers import CrossEncoder
 from openai import OpenAI
 
 from app.config import settings
@@ -34,9 +32,9 @@ logger = logging.getLogger(__name__)
 
 _pinecone_client: Pinecone | None = None
 _openai_client: OpenAI | None = None
-_bm25_encoder: BM25Encoder | None = None
-# _cross_encoder: CrossEncoder | None = None
-# _cross_encoder = None
+_bm25_encoder = None
+_cross_encoder = None
+
 
 def _get_pinecone() -> Pinecone:
     global _pinecone_client
@@ -55,34 +53,34 @@ def _get_openai() -> OpenAI:
     return _openai_client
 
 
-def _get_bm25() -> BM25Encoder:
+def _get_bm25():
     """
     BM25Encoder from pinecone-text.
     For demo: use default pre-fitted encoder.
     In production: fit on your corpus → encoder.fit(corpus_texts) → save.
+
+    Imported lazily so the module loads cleanly when hybrid search is disabled.
     """
     global _bm25_encoder
     if _bm25_encoder is None:
+        from pinecone_text.sparse import BM25Encoder
         _bm25_encoder = BM25Encoder().default()  # pre-fitted on MS MARCO
     return _bm25_encoder
 
 
-# def _get_cross_encoder() -> CrossEncoder:
-#     """
-#     Cross-encoder for reranking.
-#     ms-marco-MiniLM-L-6-v2 is small, fast, and good enough for demo.
-#     """
-#     global _cross_encoder
-#     if _cross_encoder is None:
-#         _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-#      if _cross_encoder is None:
-#          from sentence_transformers import CrossEncoder
-#
-#          _cross_encoder = CrossEncoder(
-#             "cross-encoder/ms-marco-MiniLM-L-6-v2"
-#          )
-#
-#     return _cross_encoder
+def _get_cross_encoder():
+    """
+    Cross-encoder for reranking.
+    ms-marco-MiniLM-L-6-v2 is small, fast, and good enough for demo.
+
+    Imported lazily so sentence-transformers is not loaded when reranking
+    is disabled — avoids large model downloads on constrained deployments.
+    """
+    global _cross_encoder
+    if _cross_encoder is None:
+        from sentence_transformers import CrossEncoder
+        _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    return _cross_encoder
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +128,7 @@ def ensure_index() -> None:
     logger.info("Creating Pinecone index '%s'.", settings.pinecone_index_name)
     pc.create_index(
         name=settings.pinecone_index_name,
-        dimension=settings.embedding_dimension,   # 2048 dimensions
+        dimension=settings.embedding_dimension,   # 1536 for text-embedding-3-small
         metric="dotproduct",                       # required for hybrid search
         spec=ServerlessSpec(
             cloud=settings.pinecone_cloud,         # "aws"
@@ -149,29 +147,30 @@ def get_index():
 
 def insert_chunks(chunks: list[Chunk], embeddings: list[list[float]]) -> None:
     """
-    Insert chunks with both dense and sparse vectors into Pinecone.
+    Insert chunks into Pinecone.
 
-    Each vector record:
-      id     : unique UUID
-      values : dense embedding (1536-dim)
-      sparse_values : BM25 sparse vector (for hybrid search)
-      metadata : text, filename, page, chunk_index
+    When hybrid search is enabled: stores both dense and sparse (BM25) vectors.
+    When hybrid search is disabled: stores dense vectors only, with sparse_values
+    omitted — Pinecone accepts this fine on a dotproduct index.
     """
     import uuid
 
     if len(chunks) != len(embeddings):
         raise ValueError("Chunk count and embedding count must match.")
 
-    bm25 = _get_bm25()
-    texts = [chunk.text for chunk in chunks]
-    sparse_vectors = bm25.encode_documents(texts)
+    # Only compute sparse vectors if hybrid search is enabled
+    if settings.use_hybrid_search:
+        bm25 = _get_bm25()
+        texts = [chunk.text for chunk in chunks]
+        sparse_vectors = bm25.encode_documents(texts)
+    else:
+        sparse_vectors = [None] * len(chunks)
 
     vectors = []
     for chunk, dense_vec, sparse_vec in zip(chunks, embeddings, sparse_vectors):
-        vectors.append({
+        record = {
             "id": str(uuid.uuid4()),
             "values": dense_vec,
-            "sparse_values": sparse_vec,
             "metadata": {
                 "text": chunk.text,
                 "filename": chunk.filename,
@@ -179,7 +178,10 @@ def insert_chunks(chunks: list[Chunk], embeddings: list[list[float]]) -> None:
                 "chunk_index": chunk.chunk_index,
                 "doc_id": chunk.doc_id,
             },
-        })
+        }
+        if sparse_vec is not None:
+            record["sparse_values"] = sparse_vec
+        vectors.append(record)
 
     index = get_index()
     # Pinecone recommends batches of 100
@@ -192,13 +194,13 @@ def insert_chunks(chunks: list[Chunk], embeddings: list[list[float]]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Hybrid Search
+# Hybrid Search (dense-only fallback when USE_HYBRID_SEARCH=false)
 # ---------------------------------------------------------------------------
 
 def hybrid_search(
     query: str,
     top_k: int = 5,
-    rerank: bool = False,
+    rerank: bool = True,
     fetch_k: int = 20,
 ) -> list[dict]:
     """
@@ -224,37 +226,53 @@ def hybrid_search(
         top_k    : final number of results to return
         rerank   : whether to apply cross-encoder reranking
         fetch_k  : how many candidates to fetch before reranking
+
+    NOTE: When use_hybrid_search=False this function runs dense-only search.
+    When use_reranking=False the cross-encoder step is skipped entirely.
+    Both flags are currently false in production to avoid large dependency
+    downloads on the free-tier deployment.
     """
     # We fetch more candidates when reranking (rerank needs a larger pool)
     candidates_to_fetch = fetch_k if rerank else top_k
 
-    # Step 1: encode query (dense + sparse)
+    # Step 1: encode query — always need dense; sparse only for hybrid
     dense_vector = embed_query(query)
-    bm25 = _get_bm25()
-    sparse_vector = bm25.encode_queries(query)
 
-    # Step 2: hybrid query — Pinecone handles RRF internally
     index = get_index()
-    response = index.query(
-        vector=dense_vector,
-        sparse_vector=sparse_vector,
-        top_k=candidates_to_fetch,
-        include_metadata=True,
-    )
+
+    if settings.use_hybrid_search:
+        # Full hybrid query: dense + BM25 sparse, Pinecone handles RRF internally
+        bm25 = _get_bm25()
+        sparse_vector = bm25.encode_queries(query)
+        response = index.query(
+            vector=dense_vector,
+            sparse_vector=sparse_vector,
+            top_k=candidates_to_fetch,
+            include_metadata=True,
+        )
+        logger.info("Hybrid (dense + sparse) search executed.")
+    else:
+        # Dense-only query — hybrid search disabled for this deployment
+        response = index.query(
+            vector=dense_vector,
+            top_k=candidates_to_fetch,
+            include_metadata=True,
+        )
+        logger.info("Dense-only search executed (hybrid search disabled).")
 
     matches = response.get("matches", [])
 
     if not matches:
-        logger.warning("Hybrid search returned 0 results for query: '%s'", query[:80])
+        logger.warning("Search returned 0 results for query: '%s'", query[:80])
         return []
 
-    # Step 3: cross-encoder reranking (medium priority feature)
-    if rerank and len(matches) > 1:
+    # Step 2: cross-encoder reranking (skipped when use_reranking=False)
+    if rerank and settings.use_reranking and len(matches) > 1:
         matches = _rerank(query, matches, top_k)
     else:
         matches = matches[:top_k]
 
-    # Step 4: normalize to our standard result format
+    # Step 3: normalize to our standard result format
     results = []
     for match in matches:
         meta = match.get("metadata", {})
@@ -267,8 +285,8 @@ def hybrid_search(
         })
 
     logger.info(
-        "Hybrid search complete — returned %d results (rerank=%s).",
-        len(results), rerank,
+        "Search complete — returned %d results (hybrid=%s, rerank=%s).",
+        len(results), settings.use_hybrid_search, rerank and settings.use_reranking,
     )
     return results
 
@@ -284,6 +302,9 @@ def _rerank(query: str, matches: list[dict], top_k: int) -> list[dict]:
     Retrieve top-N candidates from Pinecone, score each
     (query, document) pair with the cross-encoder, then return
     the top-K candidates by rerank score.
+
+    Only called when use_reranking=True; _get_cross_encoder() is lazy
+    so sentence-transformers is never imported otherwise.
     """
     cross_encoder = _get_cross_encoder()
 
@@ -293,7 +314,6 @@ def _rerank(query: str, matches: list[dict], top_k: int) -> list[dict]:
     ]
 
     pairs = [(query, text) for text in texts]
-
     scores = cross_encoder.predict(pairs)
 
     logger.info(
@@ -302,13 +322,9 @@ def _rerank(query: str, matches: list[dict], top_k: int) -> list[dict]:
         len(scores),
     )
 
-    # Create NEW normal dictionaries instead of modifying
-    # Pinecone Match objects in-place.
     reranked_candidates = []
-
     for match, score in zip(matches, scores):
         metadata = match.get("metadata", {})
-
         reranked_candidates.append({
             "id": match.get("id"),
             "score": match.get("score", 0.0),
@@ -322,7 +338,6 @@ def _rerank(query: str, matches: list[dict], top_k: int) -> list[dict]:
             f"for {len(matches)} candidates."
         )
 
-    # Sort using our own normal dictionaries
     reranked_candidates.sort(
         key=lambda m: m["rerank_score"],
         reverse=True,
@@ -330,10 +345,8 @@ def _rerank(query: str, matches: list[dict], top_k: int) -> list[dict]:
 
     logger.debug(
         "Reranking complete — top score: %.4f, bottom score: %.4f",
-        reranked_candidates[0]["rerank_score"]
-        if reranked_candidates else 0,
-        reranked_candidates[-1]["rerank_score"]
-        if reranked_candidates else 0,
+        reranked_candidates[0]["rerank_score"] if reranked_candidates else 0,
+        reranked_candidates[-1]["rerank_score"] if reranked_candidates else 0,
     )
 
     return reranked_candidates[:top_k]
