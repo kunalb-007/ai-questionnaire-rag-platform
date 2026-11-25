@@ -62,8 +62,24 @@ class SourceReference(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceReference]
+    status: str = Field(
+        description=(
+            "'answered' — LLM generated a grounded answer. "
+            "'insufficient_evidence' — top retrieval score was below the "
+            "configured threshold; LLM was not called. "
+            "'no_documents' — zero chunks returned from the vector store."
+        )
+    )
+    top_retrieval_score: float | None = Field(
+        description=(
+            "Highest similarity score among retrieved chunks. "
+            "None when no chunks were returned. "
+            "Do not treat this as an answer confidence score — "
+            "it measures vector similarity, not factual correctness."
+        )
+    )
     retrieval_latency_ms: float = Field(
-        description="Time from query embedding to Qdrant result, in milliseconds."
+        description="Time from query embedding to Pinecone result, in milliseconds."
     )
     generation_latency_ms: float = Field(
         description="Time from prompt construction to LLM response, in milliseconds."
@@ -88,3 +104,33 @@ class HealthResponse(BaseModel):
 class ErrorResponse(BaseModel):
     detail: str
     error_type: str
+
+# ---------------------------------------------------------------------------
+# /questionnaires/process and /questionnaires/export
+# ---------------------------------------------------------------------------
+
+class QuestionResult(BaseModel):
+    row: int = Field(description="1-based row number from the uploaded CSV.")
+    question: str
+    answer: str
+    status: str = Field(
+        description=(
+            "'answered' — grounded answer generated. "
+            "'insufficient_evidence' — top retrieval score below threshold. "
+            "'no_documents' — vector store returned zero chunks."
+        )
+    )
+    sources: list[SourceReference]
+    top_retrieval_score: float | None = Field(
+        description="Highest similarity score among retrieved chunks. None if no chunks found."
+    )
+
+
+class QuestionnaireResponse(BaseModel):
+    total_questions: int = Field(description="Total questions processed from the CSV.")
+    answered: int = Field(description="Questions with status 'answered'.")
+    insufficient_evidence: int = Field(
+        description="Questions where retrieval score was below the configured threshold."
+    )
+    no_documents: int = Field(description="Questions where the vector store returned nothing.")
+    results: list[QuestionResult]

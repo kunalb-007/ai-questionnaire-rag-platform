@@ -26,6 +26,7 @@ Bounded retries (Phase 3):
 """
 
 import logging
+from functools import lru_cache
 import time
 
 import httpx
@@ -81,15 +82,51 @@ def run_query(question: str, top_k: int) -> dict:
     retrieval_latency_ms = round((time.perf_counter() - t0) * 1000, 2)
 
     if not chunks:
-        logger.warning("Query returned zero chunks from Qdrant: '%s'", question[:80])
-        # Return a graceful no-results answer rather than raising an error.
-        # The collection may be empty or the question may be entirely off-topic.
+        logger.warning("Query returned zero chunks: '%s'", question[:80])
         return {
             "answer": (
                 "No relevant documents were found for your question. "
                 "Please ensure the relevant documents have been uploaded."
             ),
             "sources": [],
+            "status": "no_documents",
+            "top_retrieval_score": None,
+            "retrieval_latency_ms": retrieval_latency_ms,
+            "generation_latency_ms": 0.0,
+        }
+
+    # Highest similarity score among the returned chunks.
+    # Computed once here — reused by both the threshold check and the final
+    # return dict so there is no double iteration over chunks.
+    top_score = round(max(chunk.score for chunk in chunks), 4)
+
+    # --- Score threshold check ---
+    # If the best-matching chunk is below the configured threshold we do not
+    # call the LLM. Returning "insufficient evidence" is more honest than
+    # generating an answer from weakly-matched context.
+    #
+    # Interview note: similarity score measures vector proximity, not factual
+    # relevance. A score below 0.45 on a cosine / dot-product index typically
+    # means no chunk is meaningfully related to the query. Calling the LLM on
+    # such context risks hallucination dressed as a grounded answer.
+    if top_score < settings.min_retrieval_score:
+        logger.warning(
+            "Top retrieval score %.4f below threshold %.4f — returning "
+            "insufficient_evidence for query: '%s'",
+            top_score,
+            settings.min_retrieval_score,
+            question[:80],
+        )
+        return {
+            "answer": (
+                "The retrieved documents do not contain sufficiently relevant "
+                "information to answer this question reliably. "
+                f"(Top retrieval score: {top_score:.4f}, "
+                f"threshold: {settings.min_retrieval_score:.4f})"
+            ),
+            "sources": [],
+            "status": "insufficient_evidence",
+            "top_retrieval_score": top_score,
             "retrieval_latency_ms": retrieval_latency_ms,
             "generation_latency_ms": 0.0,
         }
@@ -118,9 +155,37 @@ def run_query(question: str, top_k: int) -> dict:
     return {
         "answer": answer_text,
         "sources": unique_sources,
+        "status": "answered",
+        "top_retrieval_score": top_score,
         "retrieval_latency_ms": retrieval_latency_ms,
         "generation_latency_ms": generation_latency_ms,
     }
+
+
+@lru_cache(maxsize=1)
+def _get_llm() -> ChatOpenAI:
+    """
+    Return a cached ChatOpenAI instance configured from settings.
+
+    lru_cache(maxsize=1) on a zero-argument function is the standard Python
+    pattern for a lazy singleton: the instance is created on the first call
+    and reused on every subsequent call within the same process.
+
+    ChatOpenAI initialises an httpx connection pool internally. Building it
+    once per process instead of once per request saves connection setup time
+    and prevents file-descriptor leaks under concurrent load.
+
+    Settings are read once at first call. A process restart picks up any
+    .env changes — no manual cache invalidation needed.
+    """
+    return ChatOpenAI(
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        temperature=0,
+        max_tokens=1024,
+        timeout=settings.request_timeout,
+    )
 
 
 def _generate_with_retry(question: str, chunks: list[RetrievedChunk]) -> str:
@@ -139,14 +204,7 @@ def _generate_with_retry(question: str, chunks: list[RetrievedChunk]) -> str:
         f"Answer (cite sources inline):"
     )
 
-    llm = ChatOpenAI(
-        model=settings.llm_model,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        temperature=0,
-        max_tokens=1024,
-        timeout=settings.request_timeout,
-    )
+    llm = _get_llm()
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),

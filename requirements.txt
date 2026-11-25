@@ -1,19 +1,49 @@
-langchain==0.3.25
-openai
-langchain-openai==0.3.18
-langchain-core
-langchain-text-splitters==0.3.8
-pinecone             # Pinecone client
-#pinecone-text        # BM25Encoder for sparse vectors
-PyMuPDF==1.25.5
-#docling              # DOCX parsing with page numbers
-python-dotenv==1.1.0
+# Web framework
 fastapi==0.115.12
 uvicorn==0.34.2
-httpx==0.27.2
+
+# LLM orchestration
+# ChatOpenAI is used by query_service.py for generation.
+# langchain-text-splitters is used by chunker.py.
+# langchain core is a transitive dependency of langchain-openai — not imported directly.
+langchain-openai==0.3.18
+langchain-text-splitters==0.3.8
+
+# OpenAI SDK
+# Used directly by embedding_service.py and pinecone_service.py for embeddings.
+openai==1.109.1
+
+# Vector store
+# pinecone SDK v5 — provides Pinecone, ServerlessSpec used in pinecone_service.py.
+pinecone==5.4.2
+
+# Document parsing
+# PyMuPDF (fitz) used by parser.py for PDF extraction.
+# DOCX support is currently disabled (Docling commented out).
+PyMuPDF==1.25.5
+
+# File upload support (required by FastAPI's UploadFile)
+python-multipart==0.0.34
+
+# HTTP client
+# Used by langchain-openai internally and caught directly in query_service.py
+# for transient retry logic (httpx.TimeoutException, httpx.ConnectError).
+httpx==0.28.1
+
+# Config and validation
 pydantic==2.11.4
-pydantic-settings==2.3.0
+pydantic-settings==2.2.1
+python-dotenv==1.1.0
+
+# Testing
 pytest==8.3.5
 pytest-asyncio==0.26.0
-#sentence-transformers  # cross-encoder/ms-marco-MiniLM-L-6-v2
-python-multipart     # required for FastAPI file uploads
+
+# Optional — only required when feature flags are enabled in .env
+# Install these if USE_HYBRID_SEARCH=true or USE_RERANKING=true.
+#
+# BM25 sparse encoding for hybrid search (USE_HYBRID_SEARCH=true):
+#   pinecone-text==0.11.0
+#
+# Cross-encoder reranking (USE_RERANKING=true):
+#   sentence-transformers==4.1.0

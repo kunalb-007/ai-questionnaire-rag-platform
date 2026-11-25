@@ -1,23 +1,6 @@
-"""
-pinecone_service.py — Pinecone vector store operations.
-
-Hybrid search implementation (currently disabled for deployment):
-  Dense  : text-embedding-3-small (OpenAI) — semantic meaning
-  Sparse : BM25 (keyword matching)         — exact term overlap
-  Combined with Reciprocal Rank Fusion (RRF) — no score scaling needed
-
-Cross-encoder reranking (currently disabled for deployment):
-  After hybrid retrieval we rerank the candidates with a cross-encoder.
-  A cross-encoder reads (query, chunk) together — more accurate than
-  bi-encoder cosine similarity but too slow to run over entire corpus.
-  So: retrieve top-20 with hybrid search → rerank → return top-K.
-
-Why Pinecone over Qdrant?
-  Pinecone is fully managed — no Docker, no infra, free tier available.
-  Better for demos: no local service to start.
-"""
-
 import logging
+import uuid
+
 from pinecone import Pinecone, ServerlessSpec
 from openai import OpenAI
 
@@ -25,6 +8,30 @@ from app.config import settings
 from app.ingestion.chunker import Chunk
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Deterministic chunk ID
+# ---------------------------------------------------------------------------
+
+# Fixed namespace for uuid5. Using NAMESPACE_OID (an RFC 4122 well-known
+# namespace) scoped to this application by its string.
+_CHUNK_ID_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+
+def _make_point_id(doc_id: str, chunk_index: int) -> str:
+    """
+    Derive a deterministic Pinecone vector ID from doc_id and chunk_index.
+
+    uuid5 is name-based (SHA-1 of namespace + name) so the same
+    (doc_id, chunk_index) pair always produces the same UUID string.
+    This makes insert_chunks idempotent: re-uploading a document
+    overwrites existing vectors via upsert instead of creating duplicates.
+
+    Interview note: uuid4 is random and cannot be reproduced — it is the
+    wrong choice for any upsert-based store. uuid5 is the standard fix.
+    """
+    return str(uuid.uuid5(_CHUNK_ID_NAMESPACE, f"{doc_id}_{chunk_index}"))
+
 
 # ---------------------------------------------------------------------------
 # Clients (lazy singletons)
@@ -153,7 +160,6 @@ def insert_chunks(chunks: list[Chunk], embeddings: list[list[float]]) -> None:
     When hybrid search is disabled: stores dense vectors only, with sparse_values
     omitted — Pinecone accepts this fine on a dotproduct index.
     """
-    import uuid
 
     if len(chunks) != len(embeddings):
         raise ValueError("Chunk count and embedding count must match.")
@@ -169,7 +175,7 @@ def insert_chunks(chunks: list[Chunk], embeddings: list[list[float]]) -> None:
     vectors = []
     for chunk, dense_vec, sparse_vec in zip(chunks, embeddings, sparse_vectors):
         record = {
-            "id": str(uuid.uuid4()),
+            "id": _make_point_id(chunk.doc_id, chunk.chunk_index),
             "values": dense_vec,
             "metadata": {
                 "text": chunk.text,

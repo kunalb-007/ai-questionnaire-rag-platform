@@ -1,29 +1,37 @@
-services:
-  qdrant:
-    image: qdrant/qdrant:v1.14.1
-    container_name: qdrant_rag
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - ./qdrant_storage:/qdrant/storage
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+# docker-compose.yml
+#
+# Single-service compose: the FastAPI application only.
+#
+# With Pinecone (managed cloud) as the vector store, there is no local
+# database container to manage. This is simpler than the previous
+# Qdrant-based compose and requires only an .env file with valid API keys.
+#
+# Usage:
+#   docker compose up --build          # build and start
+#   docker compose up -d               # start in background
+#   docker compose logs -f app         # follow logs
+#   docker compose down                # stop and remove container
 
-  api:
-    build: .
-    container_name: rag_api
+version: "3.11"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: enterprise-doc-intelligence
     ports:
       - "8000:8000"
     env_file:
+      # Copy .env.example to .env and fill in your API keys before running.
       - .env
-    environment:
-      QDRANT_URL: http://qdrant:6333
-    depends_on:
-      qdrant:
-        condition: service_healthy
+    # Reload on code changes when ENVIRONMENT=development is set in .env.
+    # Remove the command override for production (uses the CMD from Dockerfile).
+    # command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
