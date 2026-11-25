@@ -44,15 +44,14 @@ class Settings(BaseSettings):
     pinecone_region: str = "us-east-1"
 
     # --- LLM ---
-    # validation_alias maps OPENROUTER_API_KEY in .env → llm_api_key attribute.
-    # populate_by_name=True means LLM_API_KEY also works as a fallback.
-    llm_api_key: str = Field(validation_alias="llm_api_key")
-    llm_model: str = "gpt-4o-mini"
-    llm_base_url: str = "https://api.openai.com/v1"
+    groq_api_key: str
+    llm_model: str = "openai/gpt-oss-20b"
+    llm_base_url: str = "https://api.groq.com/openai/v1"
 
     # --- Embeddings ---
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
+    openrouter_api_key: str
+    embedding_model: str = "nvidia/nemotron-3.5-embed-1b:free"
+    embedding_dimension: int = 2048
 
     # --- Retrieval ---
     top_k: int = 5

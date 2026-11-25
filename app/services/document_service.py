@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 ALLOWED_EXTENSIONS = {".pdf", ".txt"}
-EMBEDDING_DIMENSION = settings.embedding_dimension  # 1536
+EMBEDDING_DIMENSION = settings.embedding_dimension  # 2048
 
 
 class UnsupportedFileTypeError(ValueError):
@@ -108,7 +108,7 @@ def ingest_upload(filename: str, file_bytes: bytes) -> dict:
         if not chunks:
             raise EmptyDocumentError(f"'{filename}' produced no chunks after splitting.")
 
-        # --- Embed (OpenAI text-embedding-3-small) ---
+        # --- Embed (NVIDIA Nemotron via OpenRouter) ---
         t0 = time.perf_counter()
         try:
             texts = [chunk.text for chunk in chunks]

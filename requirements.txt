@@ -30,6 +30,8 @@ python-multipart==0.0.34
 # for transient retry logic (httpx.TimeoutException, httpx.ConnectError).
 httpx==0.28.1
 
+requests
+
 # Config and validation
 pydantic==2.11.4
 pydantic-settings==2.2.1

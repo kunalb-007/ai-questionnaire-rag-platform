@@ -2,8 +2,7 @@ import logging
 import uuid
 
 from pinecone import Pinecone, ServerlessSpec
-from openai import OpenAI
-
+from app.embeddings.embedding_service import embed_query
 from app.config import settings
 from app.ingestion.chunker import Chunk
 
@@ -38,7 +37,6 @@ def _make_point_id(doc_id: str, chunk_index: int) -> str:
 # ---------------------------------------------------------------------------
 
 _pinecone_client: Pinecone | None = None
-_openai_client: OpenAI | None = None
 _bm25_encoder = None
 _cross_encoder = None
 
@@ -48,16 +46,6 @@ def _get_pinecone() -> Pinecone:
     if _pinecone_client is None:
         _pinecone_client = Pinecone(api_key=settings.pinecone_api_key)
     return _pinecone_client
-
-
-def _get_openai() -> OpenAI:
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = OpenAI(
-            api_key=settings.llm_api_key,
-            base_url="https://openrouter.ai/api/v1",
-        )
-    return _openai_client
 
 
 def _get_bm25():
@@ -91,29 +79,6 @@ def _get_cross_encoder():
 
 
 # ---------------------------------------------------------------------------
-# Embedding
-# ---------------------------------------------------------------------------
-
-def embed_texts(texts: list[str]) -> list[list[float]]:
-    """
-    Generate dense embeddings using OpenAI text-embedding-3-small.
-    Dimension: 1536
-    """
-    if not texts:
-        return []
-    client = _get_openai()
-    response = client.embeddings.create(
-        model=settings.embedding_model,   # "text-embedding-3-small"
-        input=texts,
-    )
-    return [item.embedding for item in response.data]
-
-
-def embed_query(query: str) -> list[float]:
-    return embed_texts([query])[0]
-
-
-# ---------------------------------------------------------------------------
 # Index Management
 # ---------------------------------------------------------------------------
 
@@ -135,7 +100,7 @@ def ensure_index() -> None:
     logger.info("Creating Pinecone index '%s'.", settings.pinecone_index_name)
     pc.create_index(
         name=settings.pinecone_index_name,
-        dimension=settings.embedding_dimension,   # 1536 for text-embedding-3-small
+        dimension=settings.embedding_dimension,   # 2048 for Nemotron embeddings
         metric="dotproduct",                       # required for hybrid search
         spec=ServerlessSpec(
             cloud=settings.pinecone_cloud,         # "aws"
